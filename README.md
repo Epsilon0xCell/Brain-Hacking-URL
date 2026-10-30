@@ -1,6 +1,6 @@
 ![BrainHacking URL banner](banner.png)
 
-# BrainHacking-URL
+# Brain-Hacking-URL
 
 URL that hacks the human mind
 
