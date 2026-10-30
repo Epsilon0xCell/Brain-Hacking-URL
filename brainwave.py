@@ -29,10 +29,13 @@ SAMPLE_RATE = 44100
 
 def frames(mode, base, beat, seconds, volume):
     total = int(SAMPLE_RATE * seconds)
-    fade = int(SAMPLE_RATE * 2)  # 2 s fade in/out avoids clicks
+    # 2 s fade in/out avoids clicks, capped at half the file so short
+    # files still reach full volume in the middle instead of peaking
+    # at a fraction of the requested volume.
+    fade = min(int(SAMPLE_RATE * 2), total // 2)
     for n in range(total):
         t = n / SAMPLE_RATE
-        env = min(1.0, n / fade, (total - n) / fade)
+        env = min(1.0, n / fade, (total - n) / fade) if fade > 0 else 1.0
         if mode == "binaural":
             left = math.sin(2 * math.pi * (base - beat / 2) * t)
             right = math.sin(2 * math.pi * (base + beat / 2) * t)
@@ -67,8 +70,13 @@ def main(argv=None):
     parser.add_argument("--volume", type=float, default=0.5, help="0.0-1.0 (default 0.5)")
     parser.add_argument("-o", "--output", default="brainwave.wav")
     args = parser.parse_args(argv)
-    if args.duration <= 0 or not 0 < args.volume <= 1:
-        print("error: duration must be > 0 and volume in (0, 1]", file=sys.stderr)
+    values = (args.base, args.beat, args.duration, args.volume)
+    if (not all(math.isfinite(v) for v in values)
+            or args.base <= 0 or args.beat < 0
+            or args.duration <= 0 or not 0 < args.volume <= 1):
+        print("error: base must be > 0, beat must be >= 0, duration must be > 0, "
+              "volume must be in (0, 1], and all values must be finite numbers",
+              file=sys.stderr)
         return 1
     write_wav(args.output, args.mode, args.base, args.beat, args.duration, args.volume)
     print(f"Wrote {args.output}: {args.mode}, base {args.base:g} Hz, "
