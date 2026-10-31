@@ -52,10 +52,11 @@ def frames(mode, base, beat, seconds, volume):
         if mode == "binaural":
             # I split the beat around the carrier, half below in the
             # left ear and half above in the right, so the two tones
-            # differ by exactly the beat frequency. Nothing stops a
-            # caller from passing a beat wider than twice the base,
-            # which pushes the left frequency below zero; the sine
-            # still renders, as a tone at the mirrored frequency.
+            # differ by exactly the beat frequency. main refuses a
+            # beat wider than twice the base before any file opens,
+            # because that would push this left frequency below zero
+            # and the sine would render it as a mirrored tone instead
+            # of the one that was asked for.
             left = math.sin(2 * math.pi * (base - beat / 2) * t)
             right = math.sin(2 * math.pi * (base + beat / 2) * t)
         else:  # isochronic: one tone, gated at the beat rate
@@ -79,25 +80,33 @@ def write_wav(path, mode, base, beat, seconds, volume):
     # exists. That order is why main validates first: a failure raised
     # partway through the loop below would leave a header with missing
     # or partial audio at this path, and nothing here cleans it up.
-    with wave.open(path, "wb") as wav:
-        wav.setnchannels(2)
-        wav.setsampwidth(2)
-        wav.setframerate(SAMPLE_RATE)
-        # frames() yields one pair at a time, so I buffer pairs and
-        # flush at 1 MiB (262144 stereo frames, about 6 seconds of
-        # audio). A long session then holds one chunk in memory
-        # instead of the whole file, and the disk gets large writes
-        # instead of millions of small ones.
-        chunk = bytearray()
-        for left, right in frames(mode, base, beat, seconds, volume):
-            chunk += struct.pack("<hh", left, right)
-            if len(chunk) >= 1 << 20:
+    # I open the file myself and hand wave the handle, instead of
+    # letting wave open the path. When wave opens a path that does
+    # not exist in a writable folder, its writer object fails halfway
+    # through its own setup and then prints a second, ignored
+    # traceback from its destructor on top of the real error. Opening
+    # here means a bad path fails in this open, as a plain OSError
+    # main can report in one line.
+    with open(path, "wb") as handle:
+        with wave.open(handle, "wb") as wav:
+            wav.setnchannels(2)
+            wav.setsampwidth(2)
+            wav.setframerate(SAMPLE_RATE)
+            # frames() yields one pair at a time, so I buffer pairs and
+            # flush at 1 MiB (262144 stereo frames, about 6 seconds of
+            # audio). A long session then holds one chunk in memory
+            # instead of the whole file, and the disk gets large writes
+            # instead of millions of small ones.
+            chunk = bytearray()
+            for left, right in frames(mode, base, beat, seconds, volume):
+                chunk += struct.pack("<hh", left, right)
+                if len(chunk) >= 1 << 20:
+                    wav.writeframes(bytes(chunk))
+                    chunk.clear()
+            # The tail after the last full chunk still has to be written,
+            # or every file would end early by up to one chunk.
+            if chunk:
                 wav.writeframes(bytes(chunk))
-                chunk.clear()
-        # The tail after the last full chunk still has to be written,
-        # or every file would end early by up to one chunk.
-        if chunk:
-            wav.writeframes(bytes(chunk))
 
 
 def main(argv=None):
@@ -119,10 +128,14 @@ def main(argv=None):
     # wave nan through, and inf would pass the beat and base checks.
     # Beat 0 stays allowed on purpose; it means a plain tone, in both
     # modes, and the README says so.
-    # One limit I accept: I never check the carrier against half the
-    # sample rate. A base above 22050 Hz still writes a file, but the
-    # samples cannot hold that tone and what plays back folds down to
-    # a lower frequency.
+    # The tone checks after this block compare against half the
+    # sample rate. A tone above 22050 Hz cannot be held by 44100
+    # samples a second, and what plays back folds down to a lower
+    # frequency, so I refuse it instead of writing a file that lies
+    # about its contents. In binaural mode the tones that reach the
+    # file are base minus half the beat and base plus half the beat,
+    # so those two are what get checked; in isochronic mode the beat
+    # only gates the carrier, so the carrier alone is checked.
     values = (args.base, args.beat, args.duration, args.volume)
     if (not all(math.isfinite(v) for v in values)
             or args.base <= 0 or args.beat < 0
@@ -131,7 +144,48 @@ def main(argv=None):
               "volume must be in (0, 1], and all values must be finite numbers",
               file=sys.stderr)
         return 1
-    write_wav(args.output, args.mode, args.base, args.beat, args.duration, args.volume)
+    nyquist = SAMPLE_RATE / 2
+    if args.mode == "binaural":
+        left_hz = args.base - args.beat / 2
+        right_hz = args.base + args.beat / 2
+        if left_hz < 0:
+            print(f"error: beat {args.beat:g} Hz is wider than twice the base "
+                  f"{args.base:g} Hz, so the left tone would be a negative "
+                  "frequency", file=sys.stderr)
+            return 1
+        if right_hz > nyquist:
+            print(f"error: the right tone would be {right_hz:g} Hz, above half "
+                  f"the sample rate ({nyquist:g} Hz), and would fold down on "
+                  "playback", file=sys.stderr)
+            return 1
+    elif args.base > nyquist:
+        print(f"error: base {args.base:g} Hz is above half the sample rate "
+              f"({nyquist:g} Hz) and would fold down on playback",
+              file=sys.stderr)
+        return 1
+    # A duration that rounds down to zero frames writes a valid WAV
+    # header with no audio in it and, before this check, a success
+    # line on top of that. I refuse it instead: the shortest file
+    # this tool writes holds at least one frame.
+    if int(SAMPLE_RATE * args.duration) < 1:
+        print(f"error: duration {args.duration:g} s is shorter than one frame "
+              f"(1/{SAMPLE_RATE} s) and would write an empty file",
+              file=sys.stderr)
+        return 1
+    try:
+        write_wav(args.output, args.mode, args.base, args.beat,
+                  args.duration, args.volume)
+    except OSError as err:
+        # The output path is the one thing the user types that the
+        # checks above cannot settle in advance: a missing folder, or
+        # a folder named as the file, only fails when the file opens.
+        # I report it as one error line instead of a traceback. A
+        # failure partway through a write can still leave a partial
+        # file at the path; write_wav has no cleanup, as its own
+        # comment says.
+        print(f"error: could not write {args.output}: {err.strerror or err}",
+              file=sys.stderr)
+        return 1
     print(f"Wrote {args.output}: {args.mode}, base {args.base:g} Hz, "
           f"beat {args.beat:g} Hz, {args.duration:g} s. Use headphones.")
     return 0
