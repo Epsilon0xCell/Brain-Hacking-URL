@@ -1,4 +1,4 @@
-![BrainHacking URL banner](banner.png)
+![Intro banner](intro-banner.png)
 
 # Brain-Hacking-URL
 
@@ -9,6 +9,14 @@ Data should be transmitted with headphones
 ```
 https://mynoise.net/NoiseMachines/custom.php?l=6161310308172844496600&m=BINAURALPURE0~BINAURALPURE1~BINAURALPURE2~AURALSCAN4~AURALSCAN5~AURALSCAN6~AURALSCAN7~AURALSCAN8~ISOCHRONIC9~AURALSCAN9&orig=1&title=Custom%20Brainhacking%20Audio
 ```
+
+![BrainHacking URL banner](banner.png)
+
+![Animated scene](scene.svg)
+
+![Heading plate](plate.svg)
+
+![Major separator](separator-major.svg)
 
 ## Local implementation
 
@@ -70,6 +78,15 @@ output is identical in both channels, and binaural output differs per
 channel. The audio itself was generated and measured as data only; it was
 not listened to, and no entrainment effect is claimed.
 
+![Heading plate](plate.svg)
+
+![Major separator](separator-major.svg)
+
+> Instructor clipboard note: A binaural beat wider than twice the base is refused, because it would push the left tone below 0 Hz.
+> Instructor clipboard note: Any tone past 22050 Hz is refused, because it would fold down and play back as a lower note.
+> Instructor clipboard note: A duration under one frame, 1/44100 of a second, is refused. An unwritable output path is refused the same way, with exit 1.
+> Instructor clipboard note: The audio was generated and measured as data, not listened to, and no entrainment effect is claimed.
+
 ## Tests
 
 ```bash
@@ -83,6 +100,10 @@ and check the exit code, the stderr line, and whether a file exists:
 both modes writing correct files, every refusal above, the older
 range checks, the unwritable path, `--help` at exit 0, and an
 unknown argument at exit 2.
+
+![Heading plate](plate.svg)
+
+![Major separator](separator-major.svg)
 
 ## Files
 
